@@ -58,14 +58,20 @@ export default function TradeAnalyzer() {
     });
   };
 
+  const copyResultToClipboard = () => {
+    if (!result) return;
+    const summary = `Trade Verdict: ${result.verdict}\nTeam A Value: ${result.totalA}\nTeam B Value: ${result.totalB}`;
+    navigator.clipboard.writeText(summary);
+  };
+
   return (
-    <div className="max-w-3xl mx-auto bg-white p-6 rounded shadow">
-      <h1 className="text-2xl font-bold mb-4">🔄 Fantasy Trade Analyzer</h1>
+    <div className="max-w-3xl mx-auto bg-white p-6 rounded shadow animate-fade-in">
+      <h1 className="text-3xl font-extrabold mb-6 text-center text-blue-700">🔄 Fantasy Trade Analyzer</h1>
 
       <div className="grid grid-cols-2 gap-6">
         {['A', 'B'].map((team) => (
-          <div key={team}>
-            <h2 className="font-semibold text-lg mb-2">Team {team}</h2>
+          <div key={team} className="bg-gray-50 p-4 rounded-lg shadow-sm">
+            <h2 className="font-semibold text-xl mb-3">Team {team}</h2>
             {(team === 'A' ? teamA : teamB).map((player, i) => (
               <PlayerInput
                 key={i}
@@ -86,19 +92,29 @@ export default function TradeAnalyzer() {
         ))}
       </div>
 
-      <button
-        onClick={rateTrade}
-        className="mt-6 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-      >
-        Rate Trade
-      </button>
+      <div className="mt-6 flex gap-4">
+        <button
+          onClick={rateTrade}
+          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+        >
+          Rate Trade
+        </button>
+        {result && (
+          <button
+            onClick={copyResultToClipboard}
+            className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300"
+          >
+            📋 Copy Result
+          </button>
+        )}
+      </div>
 
       {result && (
-        <div className="mt-6 p-4 bg-gray-100 rounded">
-          <p className="text-lg font-semibold">🔍 Result:</p>
-          <p>Team A Value: {result.totalA}</p>
-          <p>Team B Value: {result.totalB}</p>
-          <p className="mt-2 text-xl font-bold">{result.verdict}</p>
+        <div className="mt-6 p-4 bg-green-50 border border-green-300 rounded animate-slide-up">
+          <p className="text-lg font-semibold text-green-700">🔍 Trade Verdict</p>
+          <p>Team A Value: <span className="font-medium">{result.totalA}</span></p>
+          <p>Team B Value: <span className="font-medium">{result.totalB}</span></p>
+          <p className="mt-2 text-xl font-bold text-green-800">{result.verdict}</p>
         </div>
       )}
     </div>
@@ -155,3 +171,23 @@ function PlayerInput({ team, index, value, onChange, playerValues }) {
     </div>
   );
 }
+
+// Tailwind animation classes
+// Add these to your global CSS (index.css or App.css):
+/*
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.5s ease-out;
+}
+
+@keyframes slide-up {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.animate-slide-up {
+  animation: slide-up 0.4s ease-out;
+}
+*/
