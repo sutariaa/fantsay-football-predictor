@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useCombobox } from 'downshift';
 import axios from 'axios';
+import Fuse from 'fuse.js';
+
 
 export default function TradeAnalyzer() {
   const [teamA, setTeamA] = useState(['']);
@@ -14,15 +16,26 @@ export default function TradeAnalyzer() {
       const data = res.data;
 
       const filtered = Object.values(data).filter(
-        (p) => p.active && p.full_name && p.position !== 'DEF'
+        (p) => 
+          p.active &&
+          p.full_name &&
+          p.position !== 'DEF' &&
+          p.team // ensure they have a team
       );
 
       const values = {};
       filtered.forEach((p) => {
         const value = Math.floor(Math.random() * 30) + 70;
-        values[p.full_name] = value;
-      });
-
+        values[p.full_name] = {
+          name: p.full_name,
+          value,
+          team: p.team,
+          position: p.position,
+          avatar: p.search_rank && p.player_id
+            ? `https://sleepercdn.com/content/nfl/players/thumb/${p.player_id}.jpg`
+            : null,
+      };
+    });
       setPlayerValues(values);
     }
 
@@ -40,7 +53,7 @@ export default function TradeAnalyzer() {
   };
 
   const getTotalValue = (players) =>
-    players.reduce((sum, p) => sum + (playerValues[p] || 0), 0);
+    players.reduce((sum, p) => sum + (playerValues[p]?.value || 0), 0);
 
   const rateTrade = () => {
     const filteredA = teamA.filter(Boolean);
@@ -120,9 +133,18 @@ export default function TradeAnalyzer() {
     </div>
   );
 }
-
 function PlayerInput({ team, index, value, onChange, playerValues }) {
-  const items = Object.keys(playerValues);
+  const playerList = Object.values(playerValues);
+
+  // Fuse.js config
+  const fuse = new Fuse(playerList, {
+    keys: ['name', 'team', 'position'],
+    threshold: 0.4, // Adjust for strictness
+  });
+
+  const filteredItems = value
+    ? fuse.search(value).slice(0, 8).map((result) => result.item)
+    : playerList.slice(0, 8); // default show top few
 
   const {
     isOpen,
@@ -131,10 +153,16 @@ function PlayerInput({ team, index, value, onChange, playerValues }) {
     getItemProps,
     highlightedIndex,
   } = useCombobox({
-    items,
+    items: filteredItems,
+    itemToString: (item) => (item ? item.name : ''),
     inputValue: value,
     onInputValueChange: ({ inputValue }) => {
       onChange(team, index, inputValue);
+    },
+    onSelectedItemChange: ({ selectedItem }) => {
+      if (selectedItem) {
+        onChange(team, index, selectedItem.name);
+      }
     },
   });
 
@@ -148,30 +176,39 @@ function PlayerInput({ team, index, value, onChange, playerValues }) {
       />
       <ul
         {...getMenuProps()}
-        className="absolute z-10 bg-white border w-full rounded shadow"
+        className={`absolute z-10 bg-white border w-full rounded shadow max-h-64 overflow-y-auto ${
+          isOpen ? '' : 'hidden'
+        }`}
       >
         {isOpen &&
-          items
-            .filter((item) =>
-              item.toLowerCase().includes(value.toLowerCase())
-            )
-            .slice(0, 6)
-            .map((item, idx) => (
-              <li
-                key={item}
-                {...getItemProps({ item, index: idx })}
-                className={`p-2 cursor-pointer ${
-                  highlightedIndex === idx ? 'bg-gray-200' : ''
-                }`}
-              >
-                {item}
-              </li>
-            ))}
+          filteredItems.map((item, idx) => (
+            <li
+              key={`${item.name}-${idx}`}
+              {...getItemProps({ item, index: idx })}
+              className={`p-2 cursor-pointer flex items-center gap-3 ${
+                highlightedIndex === idx ? 'bg-gray-200' : ''
+              }`}
+            >
+              <img
+                src={item.avatar}
+                alt={item.name}
+                className="w-8 h-8 rounded-full object-cover"
+                onError={(e) =>
+                  (e.target.src = 'https://via.placeholder.com/32?text=?')
+                }
+              />
+              <div>
+                <div className="font-semibold">{item.name}</div>
+                <div className="text-xs text-gray-600">
+                  {item.position} – {item.team}
+                </div>
+              </div>
+            </li>
+          ))}
       </ul>
     </div>
   );
 }
-
 // Tailwind animation classes
 // Add these to your global CSS (index.css or App.css):
 /*
