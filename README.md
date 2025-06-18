@@ -1,70 +1,124 @@
-# Getting Started with Create React App
+Absolutely! Here's the full `README.md` file — clean, copy-ready, and tailored to your current Fantasy Football Predictor project:
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+---
 
-## Available Scripts
+```md
+# 🏈 Fantasy Football Predictor
 
-In the project directory, you can run:
+Welcome to **Fantasy Football Predictor** — a React-based application built to help fantasy football players evaluate trades, view the NFL schedule, and follow their favorite teams.
 
-### `npm start`
+---
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## 🚀 Features
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+- 🔄 **Trade Analyzer**  
+  Rate player-for-player trades using live player values and fuzzy search.
 
-### `npm test`
+- 🗓️ **NFL Schedule Viewer**  
+  View the full 2025 NFL schedule and filter it by your favorite team.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+- ❤️ **Favorite Team Selector**  
+  Choose and persist your favorite NFL team for a more personalized experience.
 
-### `npm run build`
+- 📊 **Predictions (Coming Soon)**  
+  Explore weekly fantasy projections and matchup insights.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+- 🌐 **Responsive UI**  
+  Clean, mobile-friendly design powered by Tailwind CSS.
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+---
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## 🗂️ Folder Structure
 
-### `npm run eject`
+```
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+/frontend
+├── public/
+├── src/
+│   ├── pages/
+│   │   ├── Home.js              # Homepage with team selector and schedule
+│   │   ├── TradeAnalyzer.js     # Trade analysis interface
+│   │   └── Predictions.js       # Placeholder for upcoming prediction module
+│   ├── data/
+│   │   └── nflSchedule2025.json # Static 2025 schedule data
+│   ├── App.js                   # Routes + layout
+│   ├── index.js                 # App entry point
+│   └── index.css                # Tailwind & global styles
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+````
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+---
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+## 🛠️ Getting Started
 
-## Learn More
+### 1. Clone the project
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+```bash
+git clone https://github.com/your-username/fantasy-football-predictor.git
+cd fantasy-football-predictor/frontend
+````
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+### 2. Install dependencies
 
-### Code Splitting
+```bash
+npm install
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+### 3. Run the development server
 
-### Analyzing the Bundle Size
+```bash
+npm start
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Visit: [http://localhost:3000](http://localhost:3000)
 
-### Making a Progressive Web App
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+## 🔧 Available Scripts
 
-### Advanced Configuration
+| Script          | Description                              |
+| --------------- | ---------------------------------------- |
+| `npm start`     | Starts the development server            |
+| `npm test`      | Runs the test suite                      |
+| `npm run build` | Creates an optimized production build    |
+| `npm run eject` | Ejects CRA configuration (use with care) |
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+---
 
-### Deployment
+## 🧩 Tech Stack
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+* ⚛️ **React** – App framework
+* 🧭 **React Router** – Page navigation
+* 🎨 **Tailwind CSS** – UI styling
+* 🔍 **Fuse.js** – Fuzzy search for player dropdowns
+* 🧠 **Downshift** – Accessible autocomplete dropdowns
+* 🌐 **Axios** – API calls (e.g. Sleeper)
 
-### `npm run build` fails to minify
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## 📈 Future Enhancements
+
+* ⏳ Countdown to next game for your favorite team
+* 📅 Week-by-week schedule filtering
+* 🔔 Notifications or alerts for game days
+* 📊 Advanced trade suggestions or AI score predictions
+
+---
+
+## 👨‍💻 Author
+
+**Your Name** – [@sutariaa](https://github.com/your-handle)
+Fantasy GM, UI nerd, and football analytics enthusiast.
+
+---
+
+
+## 🙌 Acknowledgements
+
+* [Sleeper API](https://docs.sleeper.app/) for player data
+* [NFL Logos](https://www.nfl.com) for visual identity
+* [Fuse.js](https://fusejs.io/) for fuzzy text matching
+
+```
+
+---
