@@ -16,6 +16,21 @@ const SCORING_FORMATS = {
   STANDARD: 'standard'
 };
 
+// League size affects player scarcity and value
+const LEAGUE_SIZE_MULTIPLIERS = {
+  8: { QB: 0.85, RB: 1.0, WR: 1.0, TE: 0.9 },
+  10: { QB: 0.9, RB: 1.05, WR: 1.0, TE: 0.95 },
+  12: { QB: 1.0, RB: 1.1, WR: 1.0, TE: 1.0 },
+  14: { QB: 1.1, RB: 1.2, WR: 1.05, TE: 1.1 },
+  16: { QB: 1.2, RB: 1.3, WR: 1.1, TE: 1.2 },
+  18: { QB: 1.3, RB: 1.4, WR: 1.15, TE: 1.3 }
+};
+
+// Starter requirements affect positional value
+const STARTER_REQUIREMENTS = {
+  QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1 // Standard lineup
+};
+
 export default function TradeAnalyzer() {
   const { selectedTeam, getTeamByAbbr } = useTeam();
   const [teamA, setTeamA] = useState(['']);
@@ -27,31 +42,110 @@ export default function TradeAnalyzer() {
   const [loading, setLoading] = useState(false);
   const [tradeHistory, setTradeHistory] = useState([]);
   const [showMyTeamFilter, setShowMyTeamFilter] = useState(false);
+  
+  // Advanced league configuration
+  const [leagueSize, setLeagueSize] = useState(12);
+  const [keeperCount, setKeeperCount] = useState(0);
+  const [rosterSettings, setRosterSettings] = useState({
+    QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, BENCH: 6
+  });
 
-  // Enhanced player valuation system
+  // Advanced player valuation system considering league size and keeper settings
   const getPlayerValue = (player, type = leagueType) => {
     if (!playerValues[player]) return 0;
     
-    const baseValue = playerValues[player].baseValue || 0;
-    const age = playerValues[player].age || 25;
-    const position = playerValues[player].position;
+    const playerData = playerValues[player];
+    const baseValue = playerData.baseValue || 0;
+    const age = playerData.age || 25;
+    const position = playerData.position;
     
+    // Step 1: Apply league size multiplier (scarcity adjustment)
+    const sizeMultiplier = LEAGUE_SIZE_MULTIPLIERS[leagueSize] || LEAGUE_SIZE_MULTIPLIERS[12];
+    let adjustedValue = baseValue * (sizeMultiplier[position] || 1.0);
+    
+    // Step 2: Apply positional scarcity based on roster requirements
+    const totalStarters = Object.values(rosterSettings).reduce((sum, count) => sum + count, 0) - rosterSettings.BENCH;
+    const positionDemand = rosterSettings[position] || 0;
+    const flexDemand = position !== 'QB' && position !== 'TE' ? rosterSettings.FLEX * 0.3 : 0; // RB/WR can fill FLEX
+    const totalPositionDemand = (positionDemand + flexDemand) * leagueSize;
+    
+    // Higher demand = higher value multiplier
+    const demandMultiplier = position === 'QB' ? 1.0 : 
+                            position === 'RB' ? 1.1 + (totalPositionDemand / 100) :
+                            position === 'WR' ? 1.0 + (totalPositionDemand / 120) :
+                            position === 'TE' ? 1.05 + (totalPositionDemand / 80) : 1.0;
+    
+    adjustedValue *= demandMultiplier;
+    
+    // Step 3: Apply age-based multipliers by league type
+    let ageMultiplier = 1.0;
     switch (type) {
       case LEAGUE_TYPES.DYNASTY:
-        // Dynasty values favor younger players
-        const ageMultiplier = age < 25 ? 1.2 : age < 28 ? 1.0 : age < 30 ? 0.8 : 0.6;
-        return Math.round(baseValue * ageMultiplier);
+        // Dynasty heavily weights age
+        ageMultiplier = age < 23 ? 1.3 : age < 25 ? 1.2 : age < 27 ? 1.1 : 
+                       age < 29 ? 1.0 : age < 31 ? 0.8 : age < 33 ? 0.6 : 0.4;
+        break;
       
       case LEAGUE_TYPES.KEEPER:
-        // Keeper values slightly favor younger players
-        const keeperMultiplier = age < 26 ? 1.1 : age < 29 ? 1.0 : 0.85;
-        return Math.round(baseValue * keeperMultiplier);
+        // Keeper considers long-term value based on keeper count
+        const keeperPremium = keeperCount / leagueSize; // Higher keeper count = more premium on youth
+        const baseKeeperMultiplier = age < 24 ? 1.15 : age < 26 ? 1.1 : age < 28 ? 1.05 : 
+                                    age < 30 ? 1.0 : age < 32 ? 0.9 : 0.8;
+        ageMultiplier = baseKeeperMultiplier + (keeperPremium * 0.2);
+        break;
       
       case LEAGUE_TYPES.REDRAFT:
       default:
-        // Redraft values favor current year production
-        return baseValue;
+        // Redraft focuses on current year, slight penalty for very old players
+        ageMultiplier = age > 32 ? 0.95 : age > 30 ? 0.98 : 1.0;
+        break;
     }
+    
+    adjustedValue *= ageMultiplier;
+    
+    // Step 4: Apply keeper-specific adjustments
+    if (type === LEAGUE_TYPES.KEEPER && keeperCount > 0) {
+      // Players likely to be kept are more valuable
+      const keeperLikelihood = getKeeperLikelihood(playerData, keeperCount, leagueSize);
+      adjustedValue *= (1 + keeperLikelihood * 0.15); // Up to 15% bonus for keeper candidates
+    }
+    
+    // Step 5: Apply scoring format adjustments
+    if (position === 'WR' || position === 'RB' || position === 'TE') {
+      const pprMultiplier = scoringFormat === SCORING_FORMATS.PPR ? 1.1 :
+                           scoringFormat === SCORING_FORMATS.HALF_PPR ? 1.05 : 1.0;
+      adjustedValue *= pprMultiplier;
+    }
+    
+    return Math.round(adjustedValue);
+  };
+  
+  // Helper function to determine keeper likelihood
+  const getKeeperLikelihood = (playerData, keeperCount, leagueSize) => {
+    const age = playerData.age || 25;
+    const position = playerData.position;
+    const baseValue = playerData.baseValue || 0;
+    
+    // Younger, higher-value players are more likely to be kept
+    let likelihood = 0;
+    
+    // Age factor
+    if (age < 25) likelihood += 0.4;
+    else if (age < 27) likelihood += 0.3;
+    else if (age < 29) likelihood += 0.2;
+    else if (age < 31) likelihood += 0.1;
+    
+    // Value factor (top tier players more likely to be kept)
+    const valuePercentile = baseValue / 100; // Assuming max base value around 100
+    likelihood += valuePercentile * 0.4;
+    
+    // Position scarcity factor
+    if (position === 'RB') likelihood += 0.1; // RBs age faster, less likely kept long-term
+    if (position === 'QB') likelihood += 0.2; // QBs age well
+    if (position === 'WR') likelihood += 0.15; // WRs have longevity
+    if (position === 'TE') likelihood += 0.1; // TEs develop late
+    
+    return Math.min(likelihood, 1.0); // Cap at 100%
   };
 
   useEffect(() => {
@@ -242,26 +336,43 @@ export default function TradeAnalyzer() {
       <h1 className="text-4xl font-extrabold mb-8 text-center text-blue-700">🔄 Fantasy Trade Analyzer</h1>
 
       {/* Settings */}
-      <div className="mb-8 p-4 bg-gray-50 rounded-lg">
-        <h3 className="text-lg font-semibold mb-4">⚙️ League Settings</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="mb-8 p-6 bg-gray-50 rounded-lg">
+        <h3 className="text-xl font-semibold mb-6">⚙️ Advanced League Configuration</h3>
+        
+        {/* Basic Settings Row */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">League Type</label>
             <select 
               value={leagueType} 
-              onChange={(e) => setLeagueType(e.target.value)}
+              onChange={(e) => {
+                setLeagueType(e.target.value);
+                if (e.target.value === LEAGUE_TYPES.REDRAFT) setKeeperCount(0);
+              }}
               className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
               <option value={LEAGUE_TYPES.REDRAFT}>Redraft League</option>
               <option value={LEAGUE_TYPES.KEEPER}>Keeper League</option>
               <option value={LEAGUE_TYPES.DYNASTY}>Dynasty League</option>
             </select>
-            <p className="text-xs text-gray-500 mt-1">
-              {leagueType === LEAGUE_TYPES.DYNASTY && 'Dynasty values favor younger players for long-term value'}
-              {leagueType === LEAGUE_TYPES.KEEPER && 'Keeper values slightly favor younger players'}
-              {leagueType === LEAGUE_TYPES.REDRAFT && 'Redraft values focus on current season production'}
-            </p>
           </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">League Size</label>
+            <select 
+              value={leagueSize} 
+              onChange={(e) => setLeagueSize(Number(e.target.value))}
+              className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value={8}>8 Teams</option>
+              <option value={10}>10 Teams</option>
+              <option value={12}>12 Teams</option>
+              <option value={14}>14 Teams</option>
+              <option value={16}>16 Teams</option>
+              <option value={18}>18 Teams</option>
+            </select>
+          </div>
+          
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Scoring Format</label>
             <select 
@@ -269,36 +380,113 @@ export default function TradeAnalyzer() {
               onChange={(e) => setScoringFormat(e.target.value)}
               className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
-              <option value={SCORING_FORMATS.PPR}>PPR (Point Per Reception)</option>
-              <option value={SCORING_FORMATS.HALF_PPR}>Half PPR (0.5 per reception)</option>
-              <option value={SCORING_FORMATS.STANDARD}>Standard (No PPR)</option>
+              <option value={SCORING_FORMATS.PPR}>PPR (1.0)</option>
+              <option value={SCORING_FORMATS.HALF_PPR}>Half PPR (0.5)</option>
+              <option value={SCORING_FORMATS.STANDARD}>Standard (0.0)</option>
             </select>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Team Filters</label>
-            {selectedTeam ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 p-2 bg-white rounded border">
-                  <img src={selectedTeam.logo} alt={selectedTeam.name} className="h-5 w-5" />
-                  <span className="text-sm font-medium">{selectedTeam.name}</span>
-                </div>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={showMyTeamFilter}
-                    onChange={(e) => setShowMyTeamFilter(e.target.checked)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="text-sm">Show only my team players</span>
-                </label>
+          
+          {leagueType === LEAGUE_TYPES.KEEPER && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Keeper Count</label>
+              <select 
+                value={keeperCount} 
+                onChange={(e) => setKeeperCount(Number(e.target.value))}
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value={0}>0 Keepers</option>
+                <option value={1}>1 Keeper</option>
+                <option value={2}>2 Keepers</option>
+                <option value={3}>3 Keepers</option>
+                <option value={4}>4 Keepers</option>
+                <option value={5}>5 Keepers</option>
+                <option value={6}>6 Keepers</option>
+                <option value={8}>8 Keepers</option>
+                <option value={10}>10 Keepers</option>
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* Roster Settings */}
+        <div className="mb-6">
+          <h4 className="text-lg font-semibold mb-3">📋 Roster Configuration</h4>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+            {Object.entries(rosterSettings).map(([position, count]) => (
+              <div key={position}>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{position}</label>
+                <input
+                  type="number"
+                  min="0"
+                  max={position === 'BENCH' ? 15 : 3}
+                  value={count}
+                  onChange={(e) => setRosterSettings(prev => ({
+                    ...prev,
+                    [position]: Number(e.target.value)
+                  }))}
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center"
+                />
               </div>
-            ) : (
-              <p className="text-sm text-gray-500 p-2 bg-white rounded border">
-                Select a team on the Home page to enable team-specific filters
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Roster settings affect positional scarcity and player values
+          </p>
+        </div>
+
+        {/* League Impact Summary */}
+        <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+          <h4 className="text-md font-semibold text-blue-800 mb-2">📊 League Impact Summary</h4>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <span className="font-medium text-blue-700">Scarcity Multipliers:</span>
+              <ul className="text-blue-600 mt-1">
+                <li>QB: {((LEAGUE_SIZE_MULTIPLIERS[leagueSize]?.QB || 1) * 100).toFixed(0)}%</li>
+                <li>RB: {((LEAGUE_SIZE_MULTIPLIERS[leagueSize]?.RB || 1) * 100).toFixed(0)}%</li>
+                <li>WR: {((LEAGUE_SIZE_MULTIPLIERS[leagueSize]?.WR || 1) * 100).toFixed(0)}%</li>
+                <li>TE: {((LEAGUE_SIZE_MULTIPLIERS[leagueSize]?.TE || 1) * 100).toFixed(0)}%</li>
+              </ul>
+            </div>
+            <div>
+              <span className="font-medium text-blue-700">Positional Demand:</span>
+              <ul className="text-blue-600 mt-1">
+                <li>QB Needed: {rosterSettings.QB * leagueSize}</li>
+                <li>RB Needed: {(rosterSettings.RB + rosterSettings.FLEX * 0.5) * leagueSize}</li>
+                <li>WR Needed: {(rosterSettings.WR + rosterSettings.FLEX * 0.5) * leagueSize}</li>
+                <li>TE Needed: {rosterSettings.TE * leagueSize}</li>
+              </ul>
+            </div>
+            <div>
+              <span className="font-medium text-blue-700">Age Weighting:</span>
+              <p className="text-blue-600 mt-1">
+                {leagueType === LEAGUE_TYPES.DYNASTY && 'Heavy age premium (up to 30% bonus for youth)'}
+                {leagueType === LEAGUE_TYPES.KEEPER && `Keeper premium based on ${keeperCount} keeper${keeperCount !== 1 ? 's' : ''}`}
+                {leagueType === LEAGUE_TYPES.REDRAFT && 'Current season focus (minimal age impact)'}
               </p>
-            )}
+            </div>
           </div>
         </div>
+
+        {/* Team Filters */}
+        {selectedTeam && (
+          <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <img src={selectedTeam.logo} alt={selectedTeam.name} className="h-5 w-5" />
+                <span className="text-sm font-medium">{selectedTeam.name} Team Filter</span>
+              </div>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={showMyTeamFilter}
+                  onChange={(e) => setShowMyTeamFilter(e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm">Show only my team players</span>
+              </label>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Trade Input */}

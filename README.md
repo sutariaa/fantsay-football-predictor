@@ -190,13 +190,6 @@ Unlike other trade analyzers, our system:
 - **Rate Limit**: No authentication required
 - **Data**: 2000+ active NFL players with photos, positions, teams, ages
 
----
-
-## 👨‍💻 Author
-
-**Arjun Sutaria** - Fantasy football enthusiast and developer
-- GitHub: [@sutariaa](https://github.com/sutariaa)
-- Building tools to help fantasy managers make smarter decisions
 
 ---
 
@@ -207,12 +200,6 @@ Unlike other trade analyzers, our system:
 - **[Fuse.js](https://fusejs.io/)** - Powerful fuzzy search functionality
 - **[Downshift](https://github.com/downshift-js/downshift)** - Accessible dropdown components
 - **Fantasy Football Community** - For inspiration and feedback
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
