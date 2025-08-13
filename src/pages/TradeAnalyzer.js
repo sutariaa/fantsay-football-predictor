@@ -16,6 +16,58 @@ const SCORING_FORMATS = {
   STANDARD: 'standard'
 };
 
+// Injury status definitions and multipliers
+const INJURY_STATUS = {
+  HEALTHY: 'healthy',
+  QUESTIONABLE: 'questionable', 
+  DOUBTFUL: 'doubtful',
+  OUT: 'out',
+  IR: 'ir',
+  PUP: 'pup'
+};
+
+// Injury multipliers by league type and current week
+const INJURY_MULTIPLIERS = {
+  [LEAGUE_TYPES.REDRAFT]: {
+    [INJURY_STATUS.HEALTHY]: 1.0,
+    [INJURY_STATUS.QUESTIONABLE]: 0.9,
+    [INJURY_STATUS.DOUBTFUL]: 0.7,
+    [INJURY_STATUS.OUT]: 0.3,
+    [INJURY_STATUS.IR]: 0.1,
+    [INJURY_STATUS.PUP]: 0.05
+  },
+  [LEAGUE_TYPES.KEEPER]: {
+    [INJURY_STATUS.HEALTHY]: 1.0,
+    [INJURY_STATUS.QUESTIONABLE]: 0.95,
+    [INJURY_STATUS.DOUBTFUL]: 0.85,
+    [INJURY_STATUS.OUT]: 0.6,
+    [INJURY_STATUS.IR]: 0.4,
+    [INJURY_STATUS.PUP]: 0.3
+  },
+  [LEAGUE_TYPES.DYNASTY]: {
+    [INJURY_STATUS.HEALTHY]: 1.0,
+    [INJURY_STATUS.QUESTIONABLE]: 0.98,
+    [INJURY_STATUS.DOUBTFUL]: 0.92,
+    [INJURY_STATUS.OUT]: 0.8,
+    [INJURY_STATUS.IR]: 0.7, // Depends on injury type - could be 0.9 for minor, 0.3 for major
+    [INJURY_STATUS.PUP]: 0.6
+  }
+};
+
+// Season timing affects injury impact
+const getSeasonMultiplier = (currentWeek, injuryStatus) => {
+  if (injuryStatus === INJURY_STATUS.HEALTHY) return 1.0;
+  
+  // Early season injuries have less impact than late season
+  if (currentWeek <= 6) {
+    return 1.0; // Full season to recover
+  } else if (currentWeek <= 12) {
+    return 0.9; // Significant season left
+  } else {
+    return 0.7; // Playoff push, less time to return
+  }
+};
+
 // League size affects player scarcity and value
 const LEAGUE_SIZE_MULTIPLIERS = {
   8: { QB: 0.85, RB: 1.0, WR: 1.0, TE: 0.9 },
@@ -31,10 +83,19 @@ const STARTER_REQUIREMENTS = {
   QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1 // Standard lineup
 };
 
+// Pick timing affects value (current year vs future picks)
+const PICK_TIMING = {
+  CURRENT_YEAR: 'current',
+  NEXT_YEAR: 'next',
+  FUTURE: 'future' // 2+ years out
+};
+
 export default function TradeAnalyzer() {
   const { selectedTeam, getTeamByAbbr } = useTeam();
-  const [teamA, setTeamA] = useState(['']);
-  const [teamB, setTeamB] = useState(['']);
+  const [givingUp, setGivingUp] = useState(['']);
+  const [getting, setGetting] = useState(['']);
+  const [givingUpPicks, setGivingUpPicks] = useState([]);
+  const [gettingPicks, setGettingPicks] = useState([]);
   const [playerValues, setPlayerValues] = useState({});
   const [result, setResult] = useState(null);
   const [leagueType, setLeagueType] = useState(LEAGUE_TYPES.REDRAFT);
@@ -46,9 +107,87 @@ export default function TradeAnalyzer() {
   // Advanced league configuration
   const [leagueSize, setLeagueSize] = useState(12);
   const [keeperCount, setKeeperCount] = useState(0);
+  const [currentWeek, setCurrentWeek] = useState(8); // Current NFL week for injury timing
   const [rosterSettings, setRosterSettings] = useState({
     QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, BENCH: 6
   });
+
+  // Improved tier-based pick valuation system
+  const getPickValue = (pick) => {
+    const { round, position, year } = pick;
+    const pickNumber = (round - 1) * leagueSize + position;
+    
+    // Tier-based valuation (more realistic than linear decay)
+    let baseValue;
+    
+    if (pickNumber <= 12) {
+      // Elite tier (Round 1): 85-110 points
+      baseValue = 110 - ((pickNumber - 1) * 2.0);
+    } else if (pickNumber <= 24) {
+      // High tier (Round 2): 60-83 points  
+      baseValue = 85 - ((pickNumber - 12) * 1.9);
+    } else if (pickNumber <= 36) {
+      // Mid tier (Round 3): 40-58 points
+      baseValue = 62 - ((pickNumber - 24) * 1.8);
+    } else if (pickNumber <= 60) {
+      // Depth tier (Rounds 4-5): 20-38 points
+      baseValue = 40 - ((pickNumber - 36) * 0.8);
+    } else if (pickNumber <= 84) {
+      // Late tier (Rounds 6-7): 10-19 points
+      baseValue = 21 - ((pickNumber - 60) * 0.45);
+    } else {
+      // Flyer tier (Round 8+): 1-9 points with exponential decay
+      baseValue = Math.max(1, 12 * Math.pow(0.92, pickNumber - 84));
+    }
+    
+    // League type multipliers (more conservative)
+    const typeMultipliers = {
+      [LEAGUE_TYPES.REDRAFT]: 1.0,      // Current year focus
+      [LEAGUE_TYPES.KEEPER]: 1.15,      // Moderate premium for future planning  
+      [LEAGUE_TYPES.DYNASTY]: 1.3       // Higher premium on youth/potential
+    };
+    
+    // Year-based depreciation for future picks
+    const currentYear = new Date().getFullYear();
+    const yearsDifference = year - currentYear;
+    
+    let yearMultiplier = 1.0;
+    if (yearsDifference > 0) {
+      // Future picks lose value: 15% per year for redraft, 10% for keeper, 5% for dynasty
+      const depreciationRates = {
+        [LEAGUE_TYPES.REDRAFT]: 0.15,
+        [LEAGUE_TYPES.KEEPER]: 0.10, 
+        [LEAGUE_TYPES.DYNASTY]: 0.05
+      };
+      yearMultiplier = Math.pow(1 - depreciationRates[leagueType], yearsDifference);
+    }
+    
+    // Season depreciation (picks lose value as season progresses, especially in redraft)
+    if (yearsDifference === 0 && leagueType === LEAGUE_TYPES.REDRAFT) {
+      const weekDepreciation = Math.max(0.4, 1 - (currentWeek * 0.04)); // Lose 4% per week, floor at 40%
+      yearMultiplier *= weekDepreciation;
+    }
+    
+    return Math.round(baseValue * typeMultipliers[leagueType] * yearMultiplier);
+  };
+
+  // Helper function for common league sizes (parse pick descriptions)
+  const getStandardPickValue = (pickDescription, leagueTypeOverride = leagueType, leagueSizeOverride = leagueSize) => {
+    // Parse strings like "2025 Round 1, Pick 1" or "Round 2, Pick 5"
+    const roundMatch = pickDescription.match(/Round\s+(\d+)/i);
+    const pickMatch = pickDescription.match(/Pick\s+(\d+)/i);
+    const yearMatch = pickDescription.match(/(\d{4})/);
+    
+    if (!roundMatch || !pickMatch) {
+      return 0; // Invalid format, return 0 instead of throwing error
+    }
+    
+    const round = parseInt(roundMatch[1]);
+    const pickPosition = parseInt(pickMatch[1]);
+    const year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
+    
+    return getPickValue({ round, position: pickPosition, year });
+  };
 
   // Advanced player valuation system considering league size and keeper settings
   const getPlayerValue = (player, type = leagueType) => {
@@ -116,6 +255,14 @@ export default function TradeAnalyzer() {
                            scoringFormat === SCORING_FORMATS.HALF_PPR ? 1.05 : 1.0;
       adjustedValue *= pprMultiplier;
     }
+    
+    // Step 6: Apply injury status multipliers
+    const injuryStatus = playerData.injuryStatus || INJURY_STATUS.HEALTHY;
+    const baseInjuryMultiplier = INJURY_MULTIPLIERS[type][injuryStatus] || 1.0;
+    const seasonTimingMultiplier = getSeasonMultiplier(currentWeek, injuryStatus);
+    const finalInjuryMultiplier = baseInjuryMultiplier * seasonTimingMultiplier;
+    
+    adjustedValue *= finalInjuryMultiplier;
     
     return Math.round(adjustedValue);
   };
@@ -186,12 +333,30 @@ export default function TradeAnalyzer() {
               baseValue = Math.floor(Math.random() * 30) + 20;
           }
           
+          // Generate realistic injury status (most players are healthy)
+          const injuryRandom = Math.random();
+          let injuryStatus;
+          if (injuryRandom < 0.75) {
+            injuryStatus = INJURY_STATUS.HEALTHY;
+          } else if (injuryRandom < 0.85) {
+            injuryStatus = INJURY_STATUS.QUESTIONABLE;
+          } else if (injuryRandom < 0.92) {
+            injuryStatus = INJURY_STATUS.DOUBTFUL;
+          } else if (injuryRandom < 0.97) {
+            injuryStatus = INJURY_STATUS.OUT;
+          } else if (injuryRandom < 0.99) {
+            injuryStatus = INJURY_STATUS.IR;
+          } else {
+            injuryStatus = INJURY_STATUS.PUP;
+          }
+          
           values[p.full_name] = {
             name: p.full_name,
             baseValue,
             team: p.team,
             position: p.position,
             age: p.age || Math.floor(Math.random() * 10) + 22, // Random age if not available
+            injuryStatus,
             avatar: p.search_rank && p.player_id
               ? `https://sleepercdn.com/content/nfl/players/thumb/${p.player_id}.jpg`
               : null,
@@ -208,32 +373,69 @@ export default function TradeAnalyzer() {
     fetchPlayers();
   }, []);
 
-  const handleChange = (team, index, value) => {
-    const updated = team === 'A' ? [...teamA] : [...teamB];
+  const handleChange = (side, index, value) => {
+    const updated = side === 'giving' ? [...givingUp] : [...getting];
     updated[index] = value;
-    team === 'A' ? setTeamA(updated) : setTeamB(updated);
+    side === 'giving' ? setGivingUp(updated) : setGetting(updated);
   };
 
-  const addPlayer = (team) => {
-    team === 'A' ? setTeamA([...teamA, '']) : setTeamB([...teamB, '']);
+  const addPlayer = (side) => {
+    side === 'giving' ? setGivingUp([...givingUp, '']) : setGetting([...getting, '']);
   };
 
-  const getTotalValue = (players) =>
-    players.reduce((sum, p) => sum + getPlayerValue(p), 0);
+  const addPick = (side) => {
+    const newPick = { 
+      round: 1, 
+      position: 1, 
+      year: new Date().getFullYear(), 
+      timing: PICK_TIMING.CURRENT_YEAR 
+    };
+    side === 'giving' ? setGivingUpPicks([...givingUpPicks, newPick]) : setGettingPicks([...gettingPicks, newPick]);
+  };
+
+  const updatePick = (side, index, field, value) => {
+    const picks = side === 'giving' ? [...givingUpPicks] : [...gettingPicks];
+    picks[index] = { ...picks[index], [field]: value };
+    
+    // Auto-adjust timing based on year
+    const currentYear = new Date().getFullYear();
+    if (picks[index].year === currentYear) {
+      picks[index].timing = PICK_TIMING.CURRENT_YEAR;
+    } else if (picks[index].year === currentYear + 1) {
+      picks[index].timing = PICK_TIMING.NEXT_YEAR;
+    } else {
+      picks[index].timing = PICK_TIMING.FUTURE;
+    }
+    
+    side === 'giving' ? setGivingUpPicks(picks) : setGettingPicks(picks);
+  };
+
+  const removePick = (side, index) => {
+    const picks = side === 'giving' ? [...givingUpPicks] : [...gettingPicks];
+    picks.splice(index, 1);
+    side === 'giving' ? setGivingUpPicks(picks) : setGettingPicks(picks);
+  };
+
+  const getTotalValue = (players, picks = []) => {
+    const playerValue = players.reduce((sum, p) => sum + getPlayerValue(p), 0);
+    const pickValue = picks.reduce((sum, pick) => sum + getPickValue(pick), 0);
+    return playerValue + pickValue;
+  };
 
   const rateTrade = () => {
-    const filteredA = teamA.filter(Boolean);
-    const filteredB = teamB.filter(Boolean);
+    const filteredGiving = givingUp.filter(Boolean);
+    const filteredGetting = getting.filter(Boolean);
     
-    if (filteredA.length === 0 || filteredB.length === 0) {
-      alert('Please add players to both teams');
+    if ((filteredGiving.length === 0 && givingUpPicks.length === 0) || 
+        (filteredGetting.length === 0 && gettingPicks.length === 0)) {
+      alert('Please add players or picks to both sides of the trade');
       return;
     }
     
-    const totalA = getTotalValue(filteredA);
-    const totalB = getTotalValue(filteredB);
-    const diff = Math.abs(totalA - totalB);
-    const percentDiff = ((diff / Math.max(totalA, totalB)) * 100).toFixed(1);
+    const totalGiving = getTotalValue(filteredGiving, givingUpPicks);
+    const totalGetting = getTotalValue(filteredGetting, gettingPicks);
+    const diff = Math.abs(totalGiving - totalGetting);
+    const percentDiff = ((diff / Math.max(totalGiving, totalGetting)) * 100).toFixed(1);
     
     let verdict, recommendation, fairness;
     
@@ -246,12 +448,22 @@ export default function TradeAnalyzer() {
       recommendation = 'This trade is reasonably balanced.';
       fairness = 'fair';
     } else if (diff < 25) {
-      verdict = `${totalA > totalB ? 'Team A' : 'Team B'} wins slightly`;
-      recommendation = 'There\'s some imbalance but could work depending on team needs.';
+      if (totalGetting > totalGiving) {
+        verdict = 'You WIN this trade!';
+        recommendation = 'You\'re getting more value than you\'re giving up.';
+      } else {
+        verdict = 'You LOSE this trade';
+        recommendation = 'You\'re giving up more value than you\'re getting.';
+      }
       fairness = 'slight';
     } else {
-      verdict = `${totalA > totalB ? 'Team A' : 'Team B'} wins significantly`;
-      recommendation = 'This trade heavily favors one side.';
+      if (totalGetting > totalGiving) {
+        verdict = 'You WIN BIG!';
+        recommendation = 'This trade heavily favors you. Take it!';
+      } else {
+        verdict = 'You LOSE BIG';
+        recommendation = 'This trade heavily favors the other side. Avoid it!';
+      }
       fairness = 'unfair';
     }
     
@@ -259,22 +471,32 @@ export default function TradeAnalyzer() {
       verdict,
       recommendation,
       fairness,
-      totalA,
-      totalB,
+      totalGiving,
+      totalGetting,
       diff,
       percentDiff,
       leagueType,
       scoringFormat,
       timestamp: new Date(),
-      playersA: filteredA.map(p => ({
+      playersGiving: filteredGiving.map(p => ({
         name: p,
         value: getPlayerValue(p),
         ...playerValues[p]
       })),
-      playersB: filteredB.map(p => ({
+      playersGetting: filteredGetting.map(p => ({
         name: p,
         value: getPlayerValue(p),
         ...playerValues[p]
+      })),
+      picksGiving: givingUpPicks.map(pick => ({
+        ...pick,
+        value: getPickValue(pick),
+        description: `${pick.year} Round ${pick.round}, Pick ${pick.position}`
+      })),
+      picksGetting: gettingPicks.map(pick => ({
+        ...pick,
+        value: getPickValue(pick),
+        description: `${pick.year} Round ${pick.round}, Pick ${pick.position}`
       }))
     };
     
@@ -285,16 +507,22 @@ export default function TradeAnalyzer() {
   const copyResultToClipboard = () => {
     if (!result) return;
     
-    const playersAText = result.playersA.map(p => `${p.name} (${p.value})`).join(', ');
-    const playersBText = result.playersB.map(p => `${p.name} (${p.value})`).join(', ');
+    const playersGivingText = result.playersGiving.map(p => `${p.name} (${p.value})`).join(', ');
+    const playersGettingText = result.playersGetting.map(p => `${p.name} (${p.value})`).join(', ');
+    const picksGivingText = result.picksGiving.map(p => `${p.description} (${p.value})`).join(', ');
+    const picksGettingText = result.picksGetting.map(p => `${p.description} (${p.value})`).join(', ');
     
     const summary = `🏈 Fantasy Trade Analysis\n\n` +
       `League Type: ${result.leagueType.toUpperCase()}\n` +
       `Scoring: ${result.scoringFormat.toUpperCase()}\n\n` +
-      `Team A: ${playersAText}\n` +
-      `Team A Total: ${result.totalA}\n\n` +
-      `Team B: ${playersBText}\n` +
-      `Team B Total: ${result.totalB}\n\n` +
+      `GIVING UP:\n` +
+      `Players: ${playersGivingText || 'None'}\n` +
+      `Picks: ${picksGivingText || 'None'}\n` +
+      `Total Value: ${result.totalGiving}\n\n` +
+      `GETTING:\n` +
+      `Players: ${playersGettingText || 'None'}\n` +
+      `Picks: ${picksGettingText || 'None'}\n` +
+      `Total Value: ${result.totalGetting}\n\n` +
       `Verdict: ${result.verdict}\n` +
       `Difference: ${result.diff} points (${result.percentDiff}%)\n` +
       `Recommendation: ${result.recommendation}`;
@@ -303,20 +531,28 @@ export default function TradeAnalyzer() {
     alert('Trade analysis copied to clipboard!');
   };
   
-  const removePlayer = (team, index) => {
-    const updated = team === 'A' ? [...teamA] : [...teamB];
+  const removePlayer = (side, index) => {
+    const updated = side === 'giving' ? [...givingUp] : [...getting];
     updated.splice(index, 1);
     if (updated.length === 0) updated.push(''); // Always keep at least one input
-    team === 'A' ? setTeamA(updated) : setTeamB(updated);
+    side === 'giving' ? setGivingUp(updated) : setGetting(updated);
   };
   
-  const clearTeam = (team) => {
-    team === 'A' ? setTeamA(['']) : setTeamB(['']);
+  const clearSide = (side) => {
+    if (side === 'giving') {
+      setGivingUp(['']);
+      setGivingUpPicks([]);
+    } else {
+      setGetting(['']);
+      setGettingPicks([]);
+    }
   };
   
   const clearTrade = () => {
-    setTeamA(['']);
-    setTeamB(['']);
+    setGivingUp(['']);
+    setGetting(['']);
+    setGivingUpPicks([]);
+    setGettingPicks([]);
     setResult(null);
   };
 
@@ -406,6 +642,19 @@ export default function TradeAnalyzer() {
               </select>
             </div>
           )}
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Current Week</label>
+            <select 
+              value={currentWeek} 
+              onChange={(e) => setCurrentWeek(Number(e.target.value))}
+              className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              {[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18].map(week => (
+                <option key={week} value={week}>Week {week}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Roster Settings */}
@@ -437,7 +686,7 @@ export default function TradeAnalyzer() {
         {/* League Impact Summary */}
         <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
           <h4 className="text-md font-semibold text-blue-800 mb-2">📊 League Impact Summary</h4>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
             <div>
               <span className="font-medium text-blue-700">Scarcity Multipliers:</span>
               <ul className="text-blue-600 mt-1">
@@ -448,21 +697,40 @@ export default function TradeAnalyzer() {
               </ul>
             </div>
             <div>
-              <span className="font-medium text-blue-700">Positional Demand:</span>
-              <ul className="text-blue-600 mt-1">
-                <li>QB Needed: {rosterSettings.QB * leagueSize}</li>
-                <li>RB Needed: {(rosterSettings.RB + rosterSettings.FLEX * 0.5) * leagueSize}</li>
-                <li>WR Needed: {(rosterSettings.WR + rosterSettings.FLEX * 0.5) * leagueSize}</li>
-                <li>TE Needed: {rosterSettings.TE * leagueSize}</li>
+              <span className="font-medium text-blue-700">Pick Value Tiers:</span>
+              <ul className="text-blue-600 mt-1 text-xs">
+                <li>Elite (1-12): 85-110pts</li>
+                <li>High (13-24): 60-83pts</li>
+                <li>Mid (25-36): 40-58pts</li>
+                <li>Late (37+): &lt;40pts</li>
               </ul>
             </div>
             <div>
               <span className="font-medium text-blue-700">Age Weighting:</span>
-              <p className="text-blue-600 mt-1">
-                {leagueType === LEAGUE_TYPES.DYNASTY && 'Heavy age premium (up to 30% bonus for youth)'}
-                {leagueType === LEAGUE_TYPES.KEEPER && `Keeper premium based on ${keeperCount} keeper${keeperCount !== 1 ? 's' : ''}`}
-                {leagueType === LEAGUE_TYPES.REDRAFT && 'Current season focus (minimal age impact)'}
+              <p className="text-blue-600 mt-1 text-xs">
+                {leagueType === LEAGUE_TYPES.DYNASTY && 'Heavy age premium (30% bonus for youth)'}
+                {leagueType === LEAGUE_TYPES.KEEPER && `Keeper premium (${keeperCount} keepers)`}
+                {leagueType === LEAGUE_TYPES.REDRAFT && 'Current season focus'}
               </p>
+              <p className="text-blue-600 mt-1 text-xs">
+                <span className="font-medium">Pick Multiplier:</span> {
+                  leagueType === LEAGUE_TYPES.DYNASTY ? '130%' :
+                  leagueType === LEAGUE_TYPES.KEEPER ? '115%' : '100%'
+                }
+              </p>
+            </div>
+            <div>
+              <span className="font-medium text-blue-700">Future Pick Decay:</span>
+              <ul className="text-blue-600 mt-1 text-xs">
+                <li>Redraft: -15% per year</li>
+                <li>Keeper: -10% per year</li>
+                <li>Dynasty: -5% per year</li>
+              </ul>
+              {leagueType === LEAGUE_TYPES.REDRAFT && (
+                <p className="text-blue-600 mt-1 text-xs">
+                  Week {currentWeek}: -{currentWeek * 4}% season decay
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -491,19 +759,22 @@ export default function TradeAnalyzer() {
 
       {/* Trade Input */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {['A', 'B'].map((team) => (
-          <div key={team} className="bg-gray-50 p-6 rounded-lg shadow-sm">
+        {[
+          { key: 'giving', title: '❌ What You\'re Giving Up', color: 'border-red-200 bg-red-50', buttonColor: 'bg-red-500 hover:bg-red-600' },
+          { key: 'getting', title: '✅ What You\'re Getting', color: 'border-green-200 bg-green-50', buttonColor: 'bg-green-500 hover:bg-green-600' }
+        ].map((side) => (
+          <div key={side.key} className={`p-6 rounded-lg shadow-sm border-2 ${side.color}`}>
             <div className="flex justify-between items-center mb-4">
-              <h2 className="font-semibold text-xl">Team {team}</h2>
+              <h2 className="font-semibold text-xl">{side.title}</h2>
               <div className="flex gap-2">
                 <button
-                  onClick={() => addPlayer(team)}
-                  className="text-sm bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
+                  onClick={() => addPlayer(side.key)}
+                  className={`text-sm text-white px-3 py-1 rounded ${side.buttonColor}`}
                 >
                   + Add Player
                 </button>
                 <button
-                  onClick={() => clearTeam(team)}
+                  onClick={() => clearSide(side.key)}
                   className="text-sm bg-gray-300 text-gray-700 px-3 py-1 rounded hover:bg-gray-400"
                 >
                   Clear
@@ -511,10 +782,10 @@ export default function TradeAnalyzer() {
               </div>
             </div>
             
-            {(team === 'A' ? teamA : teamB).map((player, i) => (
+            {(side.key === 'giving' ? givingUp : getting).map((player, i) => (
               <PlayerInput
                 key={i}
-                team={team}
+                team={side.key}
                 index={i}
                 value={player}
                 onChange={handleChange}
@@ -527,10 +798,46 @@ export default function TradeAnalyzer() {
               />
             ))}
             
-            {/* Team Total */}
-            <div className="mt-4 p-3 bg-white rounded border">
+            {/* Draft Picks Section */}
+            <div className="mt-4">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="font-semibold text-lg">📋 Draft Picks</h3>
+                <button
+                  onClick={() => addPick(side.key)}
+                  className={`text-sm text-white px-3 py-1 rounded ${side.buttonColor}`}
+                >
+                  + Add Pick
+                </button>
+              </div>
+              
+              {(side.key === 'giving' ? givingUpPicks : gettingPicks).map((pick, i) => (
+                <PickInput
+                  key={i}
+                  team={side.key}
+                  index={i}
+                  pick={pick}
+                  onUpdate={updatePick}
+                  onRemove={removePick}
+                  getPickValue={getPickValue}
+                  leagueSize={leagueSize}
+                  leagueType={leagueType}
+                />
+              ))}
+            </div>
+
+            {/* Side Total */}
+            <div className="mt-4 p-3 bg-white rounded border border-gray-300">
               <div className="font-semibold text-lg">
-                Team {team} Total: <span className="text-blue-600">{getTotalValue((team === 'A' ? teamA : teamB).filter(Boolean))}</span>
+                Total Value: <span className={side.key === 'giving' ? 'text-red-600' : 'text-green-600'}>
+                  {getTotalValue(
+                    (side.key === 'giving' ? givingUp : getting).filter(Boolean), 
+                    side.key === 'giving' ? givingUpPicks : gettingPicks
+                  )}
+                </span>
+              </div>
+              <div className="text-sm text-gray-600 mt-1">
+                Players: {getTotalValue((side.key === 'giving' ? givingUp : getting).filter(Boolean))} | 
+                Picks: {(side.key === 'giving' ? givingUpPicks : gettingPicks).reduce((sum, pick) => sum + getPickValue(pick), 0)}
               </div>
             </div>
           </div>
@@ -576,28 +883,70 @@ export default function TradeAnalyzer() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <h4 className="font-semibold text-lg">Team A Players</h4>
-              {result.playersA.map((player, i) => (
-                <div key={i} className="flex justify-between items-center bg-white p-2 rounded">
-                  <span>{player.name}</span>
-                  <span className="font-semibold text-blue-600">{player.value}</span>
+              <h4 className="font-semibold text-lg text-red-700">❌ Giving Up</h4>
+              
+              {/* Giving Up Players */}
+              {result.playersGiving.length > 0 && (
+                <div className="bg-red-50 p-2 rounded border border-red-200">
+                  <h5 className="font-medium text-sm text-red-700 mb-2">Players</h5>
+                  {result.playersGiving.map((player, i) => (
+                    <div key={i} className="flex justify-between items-center bg-white p-2 rounded mb-1">
+                      <span>{player.name}</span>
+                      <span className="font-semibold text-red-600">{player.value}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              
+              {/* Giving Up Picks */}
+              {result.picksGiving.length > 0 && (
+                <div className="bg-red-50 p-2 rounded border border-red-200">
+                  <h5 className="font-medium text-sm text-red-700 mb-2">Draft Picks</h5>
+                  {result.picksGiving.map((pick, i) => (
+                    <div key={i} className="flex justify-between items-center bg-white p-2 rounded mb-1">
+                      <span>{pick.description}</span>
+                      <span className="font-semibold text-red-600">{pick.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
               <div className="font-bold text-lg border-t pt-2">
-                Total: {result.totalA}
+                Total: <span className="text-red-600">{result.totalGiving}</span>
               </div>
             </div>
             
             <div className="space-y-2">
-              <h4 className="font-semibold text-lg">Team B Players</h4>
-              {result.playersB.map((player, i) => (
-                <div key={i} className="flex justify-between items-center bg-white p-2 rounded">
-                  <span>{player.name}</span>
-                  <span className="font-semibold text-blue-600">{player.value}</span>
+              <h4 className="font-semibold text-lg text-green-700">✅ Getting</h4>
+              
+              {/* Getting Players */}
+              {result.playersGetting.length > 0 && (
+                <div className="bg-green-50 p-2 rounded border border-green-200">
+                  <h5 className="font-medium text-sm text-green-700 mb-2">Players</h5>
+                  {result.playersGetting.map((player, i) => (
+                    <div key={i} className="flex justify-between items-center bg-white p-2 rounded mb-1">
+                      <span>{player.name}</span>
+                      <span className="font-semibold text-green-600">{player.value}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              
+              {/* Getting Picks */}
+              {result.picksGetting.length > 0 && (
+                <div className="bg-green-50 p-2 rounded border border-green-200">
+                  <h5 className="font-medium text-sm text-green-700 mb-2">Draft Picks</h5>
+                  {result.picksGetting.map((pick, i) => (
+                    <div key={i} className="flex justify-between items-center bg-white p-2 rounded mb-1">
+                      <span>{pick.description}</span>
+                      <span className="font-semibold text-green-600">{pick.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
               <div className="font-bold text-lg border-t pt-2">
-                Total: {result.totalB}
+                Total: <span className="text-green-600">{result.totalGetting}</span>
               </div>
             </div>
           </div>
@@ -625,7 +974,7 @@ export default function TradeAnalyzer() {
                   <span className="text-gray-500">{trade.timestamp.toLocaleTimeString()}</span>
                 </div>
                 <div className="text-gray-600">
-                  {trade.totalA} vs {trade.totalB} ({trade.leagueType})
+                  Giving: {trade.totalGiving} | Getting: {trade.totalGetting} ({trade.leagueType})
                 </div>
               </div>
             ))}
@@ -720,6 +1069,17 @@ function PlayerInput({ team, index, value, onChange, onRemove, playerValues, lea
                         <div className="font-semibold">{item.name}</div>
                         <div className="text-sm text-gray-600">
                           {item.position} – {item.team} – Age {item.age}
+                          {item.injuryStatus && item.injuryStatus !== INJURY_STATUS.HEALTHY && (
+                            <span className={`ml-2 px-1 py-0.5 rounded text-xs font-semibold ${
+                              item.injuryStatus === INJURY_STATUS.QUESTIONABLE ? 'bg-yellow-100 text-yellow-800' :
+                              item.injuryStatus === INJURY_STATUS.DOUBTFUL ? 'bg-orange-100 text-orange-800' :
+                              item.injuryStatus === INJURY_STATUS.OUT ? 'bg-red-100 text-red-800' :
+                              item.injuryStatus === INJURY_STATUS.IR ? 'bg-purple-100 text-purple-800' :
+                              item.injuryStatus === INJURY_STATUS.PUP ? 'bg-gray-100 text-gray-800' : ''
+                            }`}>
+                              {item.injuryStatus.toUpperCase()}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -748,6 +1108,91 @@ function PlayerInput({ team, index, value, onChange, onRemove, playerValues, lea
     </div>
   );
 }
+
+function PickInput({ team, index, pick, onUpdate, onRemove, getPickValue, leagueSize, leagueType }) {
+  const currentYear = new Date().getFullYear();
+  const pickValue = getPickValue(pick);
+  
+  const getTimingColor = (timing) => {
+    switch (timing) {
+      case PICK_TIMING.CURRENT_YEAR: return 'text-green-600';
+      case PICK_TIMING.NEXT_YEAR: return 'text-yellow-600';
+      case PICK_TIMING.FUTURE: return 'text-orange-600';
+      default: return 'text-gray-600';
+    }
+  };
+  
+  return (
+    <div className="bg-green-50 p-3 rounded-lg mb-2 border border-green-200">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Year</label>
+          <select
+            value={pick.year}
+            onChange={(e) => onUpdate(team, index, 'year', Number(e.target.value))}
+            className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
+          >
+            <option value={currentYear}>{currentYear}</option>
+            <option value={currentYear + 1}>{currentYear + 1}</option>
+            <option value={currentYear + 2}>{currentYear + 2}</option>
+            <option value={currentYear + 3}>{currentYear + 3}</option>
+          </select>
+        </div>
+        
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Round</label>
+          <select
+            value={pick.round}
+            onChange={(e) => onUpdate(team, index, 'round', Number(e.target.value))}
+            className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
+          >
+            {[...Array(18)].map((_, i) => (
+              <option key={i + 1} value={i + 1}>Round {i + 1}</option>
+            ))}
+          </select>
+        </div>
+        
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Pick</label>
+          <select
+            value={pick.position}
+            onChange={(e) => onUpdate(team, index, 'position', Number(e.target.value))}
+            className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500"
+          >
+            {[...Array(leagueSize)].map((_, i) => (
+              <option key={i + 1} value={i + 1}>Pick {i + 1}</option>
+            ))}
+          </select>
+        </div>
+        
+        <div className="flex items-end">
+          <button
+            onClick={() => onRemove(team, index)}
+            className="w-full p-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm"
+            title="Remove pick"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+      
+      <div className="flex justify-between items-center">
+        <div className="text-sm">
+          <span className="font-medium">Overall Pick {((pick.round - 1) * leagueSize) + pick.position}</span>
+          <span className={`ml-2 font-semibold ${getTimingColor(pick.timing)}`}>
+            ({pick.timing === PICK_TIMING.CURRENT_YEAR ? 'Current Year' : 
+              pick.timing === PICK_TIMING.NEXT_YEAR ? 'Next Year' : 'Future'})
+          </span>
+        </div>
+        <div className="text-right">
+          <div className="font-bold text-green-600 text-lg">{pickValue}</div>
+          <div className="text-xs text-gray-500">{leagueType} value</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Tailwind animation classes
 // Add these to your global CSS (index.css or App.css):
 /*

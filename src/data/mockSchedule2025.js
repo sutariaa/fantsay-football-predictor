@@ -1,7 +1,7 @@
 export const mockSchedule2025 = {
     ARI: [
-      { week: 1, opponent: 'SEA', home: true },
-      { week: 2, opponent: 'SF', home: false },
+      { week: 1, opponent: 'SF', home: false },
+      { week: 2, opponent: 'SEA', home: true },
       { week: 3, opponent: 'LAR', home: true },
     ],
     ATL: [
@@ -138,7 +138,7 @@ export const mockSchedule2025 = {
     ],
     SEA: [
       { week: 1, opponent: 'LAR', home: false },
-      { week: 2, opponent: 'ARI', home: true },
+      { week: 2, opponent: 'ARI', home: false },
       { week: 3, opponent: 'SF', home: true },
     ],
     SF: [
