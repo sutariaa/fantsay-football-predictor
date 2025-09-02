@@ -1,11 +1,12 @@
-import logo from './logo.svg';
 import './App.css';
 
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { TeamProvider, useTeam } from './contexts/TeamContext';
+import { LeagueProvider } from './contexts/LeagueContext';
 import Home from './pages/Home';
 import Predictions from './pages/Predictions';
 import TradeAnalyzer from './pages/TradeAnalyzer';
+import LeagueSettings from './pages/LeagueSettings';
 
 function Navigation() {
   const { selectedTeam, clearSelectedTeam } = useTeam();
@@ -23,6 +24,9 @@ function Navigation() {
             </Link>
             <Link to="/trade-analyzer" className="text-blue-600 font-semibold hover:text-blue-800 transition-colors">
               🔄 Trade Analyzer
+            </Link>
+            <Link to="/league-settings" className="text-blue-600 font-semibold hover:text-blue-800 transition-colors">
+              ⚙️ League Settings
             </Link>
           </div>
           
@@ -54,20 +58,23 @@ function Navigation() {
 
 function App() {
   return (
-    <TeamProvider>
-      <Router>
-        <div className="min-h-screen bg-gray-100">
-          <Navigation />
-          <div className="p-6">
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/predictions" element={<Predictions />} />
-              <Route path="/trade-analyzer" element={<TradeAnalyzer />} />
-            </Routes>
+    <LeagueProvider>
+      <TeamProvider>
+        <Router>
+          <div className="min-h-screen bg-gray-100">
+            <Navigation />
+            <div className="p-6">
+              <Routes>
+                <Route path="/" element={<Home />} />
+                <Route path="/predictions" element={<Predictions />} />
+                <Route path="/trade-analyzer" element={<TradeAnalyzer />} />
+                <Route path="/league-settings" element={<LeagueSettings />} />
+              </Routes>
+            </div>
           </div>
-        </div>
-      </Router>
-    </TeamProvider>
+        </Router>
+      </TeamProvider>
+    </LeagueProvider>
   );
 }
 

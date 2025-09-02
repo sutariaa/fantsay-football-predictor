@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useCombobox } from 'downshift';
 import { useTeam } from '../contexts/TeamContext';
+import { useLeague } from '../contexts/LeagueContext';
+import { ScoringCalculator } from '../utils/ScoringCalculator';
 import axios from 'axios';
 import Fuse from 'fuse.js';
 
@@ -90,22 +92,156 @@ const PICK_TIMING = {
   FUTURE: 'future' // 2+ years out
 };
 
+// Generate realistic projected stats based on position and tier
+const generateProjectedStats = (position) => {
+  const tierRandom = Math.random();
+  let tier;
+  
+  // Determine player tier (elite, good, average, bench)
+  if (tierRandom < 0.1) tier = 'elite';
+  else if (tierRandom < 0.3) tier = 'good';
+  else if (tierRandom < 0.6) tier = 'average';
+  else tier = 'bench';
+  
+  switch (position) {
+    case 'QB':
+      return generateQBStats(tier);
+    case 'RB':
+      return generateRBStats(tier);
+    case 'WR':
+      return generateWRStats(tier);
+    case 'TE':
+      return generateTEStats(tier);
+    default:
+      return {};
+  }
+};
+
+const generateQBStats = (tier) => {
+  const baseStats = {
+    elite: { passYards: [4500, 5200], passTDs: [35, 45], ints: [8, 12], rushYards: [400, 800], rushTDs: [3, 8] },
+    good: { passYards: [3800, 4400], passTDs: [25, 34], ints: [10, 16], rushYards: [200, 500], rushTDs: [1, 5] },
+    average: { passYards: [3200, 3700], passTDs: [18, 24], ints: [12, 18], rushYards: [100, 300], rushTDs: [0, 3] },
+    bench: { passYards: [2000, 3100], passTDs: [10, 17], ints: [8, 15], rushYards: [50, 200], rushTDs: [0, 2] }
+  };
+  
+  const stats = baseStats[tier];
+  return {
+    passing: {
+      passingYards: Math.floor(Math.random() * (stats.passYards[1] - stats.passYards[0]) + stats.passYards[0]),
+      passingTDs: Math.floor(Math.random() * (stats.passTDs[1] - stats.passTDs[0]) + stats.passTDs[0]),
+      interceptions: Math.floor(Math.random() * (stats.ints[1] - stats.ints[0]) + stats.ints[0]),
+      twoPointConversions: Math.floor(Math.random() * 3)
+    },
+    rushing: {
+      rushingYards: Math.floor(Math.random() * (stats.rushYards[1] - stats.rushYards[0]) + stats.rushYards[0]),
+      rushingTDs: Math.floor(Math.random() * (stats.rushTDs[1] - stats.rushTDs[0]) + stats.rushTDs[0]),
+      twoPointConversions: Math.floor(Math.random() * 2)
+    },
+    misc: {
+      fumbles: Math.floor(Math.random() * 4),
+      fumblesLost: Math.floor(Math.random() * 3)
+    }
+  };
+};
+
+const generateRBStats = (tier) => {
+  const baseStats = {
+    elite: { rushYards: [1400, 1800], rushTDs: [12, 18], recs: [40, 80], recYards: [400, 800], recTDs: [2, 6] },
+    good: { rushYards: [1000, 1300], rushTDs: [8, 12], recs: [30, 60], recYards: [300, 600], recTDs: [1, 4] },
+    average: { rushYards: [600, 900], rushTDs: [4, 8], recs: [20, 40], recYards: [200, 400], recTDs: [0, 3] },
+    bench: { rushYards: [200, 500], rushTDs: [1, 4], recs: [10, 25], recYards: [80, 200], recTDs: [0, 2] }
+  };
+  
+  const stats = baseStats[tier];
+  return {
+    rushing: {
+      rushingYards: Math.floor(Math.random() * (stats.rushYards[1] - stats.rushYards[0]) + stats.rushYards[0]),
+      rushingTDs: Math.floor(Math.random() * (stats.rushTDs[1] - stats.rushTDs[0]) + stats.rushTDs[0]),
+      twoPointConversions: Math.floor(Math.random() * 2)
+    },
+    receiving: {
+      receptions: Math.floor(Math.random() * (stats.recs[1] - stats.recs[0]) + stats.recs[0]),
+      receivingYards: Math.floor(Math.random() * (stats.recYards[1] - stats.recYards[0]) + stats.recYards[0]),
+      receivingTDs: Math.floor(Math.random() * (stats.recTDs[1] - stats.recTDs[0]) + stats.recTDs[0]),
+      twoPointConversions: Math.floor(Math.random() * 2)
+    },
+    misc: {
+      fumbles: Math.floor(Math.random() * 3),
+      fumblesLost: Math.floor(Math.random() * 2)
+    }
+  };
+};
+
+const generateWRStats = (tier) => {
+  const baseStats = {
+    elite: { recs: [90, 130], recYards: [1300, 1800], recTDs: [8, 15], rushAtt: [0, 5] },
+    good: { recs: [70, 90], recYards: [1000, 1300], recTDs: [5, 10], rushAtt: [0, 3] },
+    average: { recs: [45, 70], recYards: [600, 1000], recTDs: [3, 7], rushAtt: [0, 2] },
+    bench: { recs: [20, 45], recYards: [300, 600], recTDs: [1, 4], rushAtt: [0, 1] }
+  };
+  
+  const stats = baseStats[tier];
+  const rushAttempts = Math.floor(Math.random() * (stats.rushAtt[1] - stats.rushAtt[0]) + stats.rushAtt[0]);
+  
+  return {
+    receiving: {
+      receptions: Math.floor(Math.random() * (stats.recs[1] - stats.recs[0]) + stats.recs[0]),
+      receivingYards: Math.floor(Math.random() * (stats.recYards[1] - stats.recYards[0]) + stats.recYards[0]),
+      receivingTDs: Math.floor(Math.random() * (stats.recTDs[1] - stats.recTDs[0]) + stats.recTDs[0]),
+      twoPointConversions: Math.floor(Math.random() * 2)
+    },
+    rushing: rushAttempts > 0 ? {
+      rushingYards: Math.floor(Math.random() * 100),
+      rushingTDs: Math.floor(Math.random() * 2),
+      twoPointConversions: 0
+    } : {},
+    misc: {
+      fumbles: Math.floor(Math.random() * 2),
+      fumblesLost: Math.floor(Math.random() * 1)
+    }
+  };
+};
+
+const generateTEStats = (tier) => {
+  const baseStats = {
+    elite: { recs: [75, 110], recYards: [900, 1400], recTDs: [6, 12] },
+    good: { recs: [50, 75], recYards: [600, 900], recTDs: [4, 8] },
+    average: { recs: [35, 50], recYards: [400, 600], recTDs: [2, 5] },
+    bench: { recs: [15, 35], recYards: [200, 400], recTDs: [0, 3] }
+  };
+  
+  const stats = baseStats[tier];
+  return {
+    receiving: {
+      receptions: Math.floor(Math.random() * (stats.recs[1] - stats.recs[0]) + stats.recs[0]),
+      receivingYards: Math.floor(Math.random() * (stats.recYards[1] - stats.recYards[0]) + stats.recYards[0]),
+      receivingTDs: Math.floor(Math.random() * (stats.recTDs[1] - stats.recTDs[0]) + stats.recTDs[0]),
+      twoPointConversions: Math.floor(Math.random() * 2)
+    },
+    misc: {
+      fumbles: Math.floor(Math.random() * 2),
+      fumblesLost: Math.floor(Math.random() * 1)
+    }
+  };
+};
+
 export default function TradeAnalyzer() {
   const { selectedTeam, getTeamByAbbr } = useTeam();
+  const { currentLeague, scoringConfig } = useLeague();
   const [givingUp, setGivingUp] = useState(['']);
   const [getting, setGetting] = useState(['']);
   const [givingUpPicks, setGivingUpPicks] = useState([]);
   const [gettingPicks, setGettingPicks] = useState([]);
   const [playerValues, setPlayerValues] = useState({});
   const [result, setResult] = useState(null);
-  const [leagueType, setLeagueType] = useState(LEAGUE_TYPES.REDRAFT);
-  const [scoringFormat, setScoringFormat] = useState(SCORING_FORMATS.PPR);
+  const [leagueType, setLeagueType] = useState(currentLeague?.type || LEAGUE_TYPES.REDRAFT);
   const [loading, setLoading] = useState(false);
   const [tradeHistory, setTradeHistory] = useState([]);
   const [showMyTeamFilter, setShowMyTeamFilter] = useState(false);
   
   // Advanced league configuration
-  const [leagueSize, setLeagueSize] = useState(12);
+  const [leagueSize, setLeagueSize] = useState(currentLeague?.teamCount || 12);
   const [keeperCount, setKeeperCount] = useState(0);
   const [currentWeek, setCurrentWeek] = useState(8); // Current NFL week for injury timing
   const [rosterSettings, setRosterSettings] = useState({
@@ -189,23 +325,29 @@ export default function TradeAnalyzer() {
     return getPickValue({ round, position: pickPosition, year });
   };
 
-  // Advanced player valuation system considering league size and keeper settings
+  // Advanced player valuation system using actual scoring configuration
   const getPlayerValue = (player, type = leagueType) => {
     if (!playerValues[player]) return 0;
     
     const playerData = playerValues[player];
-    const baseValue = playerData.baseValue || 0;
+    const projectedStats = playerData.projectedStats;
     const age = playerData.age || 25;
     const position = playerData.position;
     
-    // Step 1: Apply league size multiplier (scarcity adjustment)
-    const sizeMultiplier = LEAGUE_SIZE_MULTIPLIERS[leagueSize] || LEAGUE_SIZE_MULTIPLIERS[12];
-    let adjustedValue = baseValue * (sizeMultiplier[position] || 1.0);
+    if (!projectedStats) return playerData.baseValue || 0;
     
-    // Step 2: Apply positional scarcity based on roster requirements
+    // Step 1: Calculate base fantasy points using league's actual scoring
+    const calculator = new ScoringCalculator(scoringConfig.getConfig());
+    const fantasyPoints = calculator.calculateTotalScore(projectedStats);
+    
+    // Step 2: Apply league size multiplier (scarcity adjustment)
+    const sizeMultiplier = LEAGUE_SIZE_MULTIPLIERS[leagueSize] || LEAGUE_SIZE_MULTIPLIERS[12];
+    let adjustedValue = fantasyPoints * (sizeMultiplier[position] || 1.0);
+    
+    // Step 3: Apply positional scarcity based on roster requirements
     const totalStarters = Object.values(rosterSettings).reduce((sum, count) => sum + count, 0) - rosterSettings.BENCH;
     const positionDemand = rosterSettings[position] || 0;
-    const flexDemand = position !== 'QB' && position !== 'TE' ? rosterSettings.FLEX * 0.3 : 0; // RB/WR can fill FLEX
+    const flexDemand = position !== 'QB' && position !== 'TE' ? rosterSettings.FLEX * 0.3 : 0;
     const totalPositionDemand = (positionDemand + flexDemand) * leagueSize;
     
     // Higher demand = higher value multiplier
@@ -216,18 +358,16 @@ export default function TradeAnalyzer() {
     
     adjustedValue *= demandMultiplier;
     
-    // Step 3: Apply age-based multipliers by league type
+    // Step 4: Apply age-based multipliers by league type
     let ageMultiplier = 1.0;
     switch (type) {
       case LEAGUE_TYPES.DYNASTY:
-        // Dynasty heavily weights age
         ageMultiplier = age < 23 ? 1.3 : age < 25 ? 1.2 : age < 27 ? 1.1 : 
                        age < 29 ? 1.0 : age < 31 ? 0.8 : age < 33 ? 0.6 : 0.4;
         break;
       
       case LEAGUE_TYPES.KEEPER:
-        // Keeper considers long-term value based on keeper count
-        const keeperPremium = keeperCount / leagueSize; // Higher keeper count = more premium on youth
+        const keeperPremium = keeperCount / leagueSize;
         const baseKeeperMultiplier = age < 24 ? 1.15 : age < 26 ? 1.1 : age < 28 ? 1.05 : 
                                     age < 30 ? 1.0 : age < 32 ? 0.9 : 0.8;
         ageMultiplier = baseKeeperMultiplier + (keeperPremium * 0.2);
@@ -235,25 +375,16 @@ export default function TradeAnalyzer() {
       
       case LEAGUE_TYPES.REDRAFT:
       default:
-        // Redraft focuses on current year, slight penalty for very old players
         ageMultiplier = age > 32 ? 0.95 : age > 30 ? 0.98 : 1.0;
         break;
     }
     
     adjustedValue *= ageMultiplier;
     
-    // Step 4: Apply keeper-specific adjustments
+    // Step 5: Apply keeper-specific adjustments
     if (type === LEAGUE_TYPES.KEEPER && keeperCount > 0) {
-      // Players likely to be kept are more valuable
       const keeperLikelihood = getKeeperLikelihood(playerData, keeperCount, leagueSize);
-      adjustedValue *= (1 + keeperLikelihood * 0.15); // Up to 15% bonus for keeper candidates
-    }
-    
-    // Step 5: Apply scoring format adjustments
-    if (position === 'WR' || position === 'RB' || position === 'TE') {
-      const pprMultiplier = scoringFormat === SCORING_FORMATS.PPR ? 1.1 :
-                           scoringFormat === SCORING_FORMATS.HALF_PPR ? 1.05 : 1.0;
-      adjustedValue *= pprMultiplier;
+      adjustedValue *= (1 + keeperLikelihood * 0.15);
     }
     
     // Step 6: Apply injury status multipliers
@@ -295,6 +426,14 @@ export default function TradeAnalyzer() {
     return Math.min(likelihood, 1.0); // Cap at 100%
   };
 
+  // Sync with league settings when league changes
+  useEffect(() => {
+    if (currentLeague) {
+      setLeagueType(currentLeague.type);
+      setLeagueSize(currentLeague.teamCount);
+    }
+  }, [currentLeague]);
+
   useEffect(() => {
     async function fetchPlayers() {
       setLoading(true);
@@ -312,26 +451,10 @@ export default function TradeAnalyzer() {
 
         const values = {};
         filtered.forEach((p) => {
-          // More realistic value generation based on position and other factors
-          let baseValue;
           const position = p.position;
           
-          switch (position) {
-            case 'QB':
-              baseValue = Math.floor(Math.random() * 40) + 60; // 60-100
-              break;
-            case 'RB':
-              baseValue = Math.floor(Math.random() * 50) + 50; // 50-100
-              break;
-            case 'WR':
-              baseValue = Math.floor(Math.random() * 45) + 45; // 45-90
-              break;
-            case 'TE':
-              baseValue = Math.floor(Math.random() * 35) + 30; // 30-65
-              break;
-            default:
-              baseValue = Math.floor(Math.random() * 30) + 20;
-          }
+          // Generate realistic projected stats based on position
+          const projectedStats = generateProjectedStats(position);
           
           // Generate realistic injury status (most players are healthy)
           const injuryRandom = Math.random();
@@ -352,11 +475,12 @@ export default function TradeAnalyzer() {
           
           values[p.full_name] = {
             name: p.full_name,
-            baseValue,
             team: p.team,
             position: p.position,
-            age: p.age || Math.floor(Math.random() * 10) + 22, // Random age if not available
+            age: p.age || Math.floor(Math.random() * 10) + 22,
             injuryStatus,
+            projectedStats,
+            baseValue: 0, // Will be calculated from projectedStats
             avatar: p.search_rank && p.player_id
               ? `https://sleepercdn.com/content/nfl/players/thumb/${p.player_id}.jpg`
               : null,
@@ -476,7 +600,7 @@ export default function TradeAnalyzer() {
       diff,
       percentDiff,
       leagueType,
-      scoringFormat,
+      leagueName: currentLeague?.name || 'Custom League',
       timestamp: new Date(),
       playersGiving: filteredGiving.map(p => ({
         name: p,
@@ -513,8 +637,8 @@ export default function TradeAnalyzer() {
     const picksGettingText = result.picksGetting.map(p => `${p.description} (${p.value})`).join(', ');
     
     const summary = `🏈 Fantasy Trade Analysis\n\n` +
-      `League Type: ${result.leagueType.toUpperCase()}\n` +
-      `Scoring: ${result.scoringFormat.toUpperCase()}\n\n` +
+      `League: ${result.leagueName}\n` +
+      `Type: ${result.leagueType.toUpperCase()}\n\n` +
       `GIVING UP:\n` +
       `Players: ${playersGivingText || 'None'}\n` +
       `Picks: ${picksGivingText || 'None'}\n` +
@@ -570,6 +694,18 @@ export default function TradeAnalyzer() {
   return (
     <div className="max-w-6xl mx-auto bg-white p-6 rounded shadow animate-fade-in">
       <h1 className="text-4xl font-extrabold mb-8 text-center text-blue-700">🔄 Fantasy Trade Analyzer</h1>
+      
+      {!currentLeague && (
+        <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+          <div className="flex items-center gap-2 text-orange-800">
+            <span className="text-lg">⚠️</span>
+            <div>
+              <p className="font-medium">No League Selected</p>
+              <p className="text-sm">Player values will use default scoring. Go to League Settings to configure your league's specific scoring system for accurate trade analysis.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings */}
       <div className="mb-8 p-6 bg-gray-50 rounded-lg">
@@ -610,16 +746,22 @@ export default function TradeAnalyzer() {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Scoring Format</label>
-            <select 
-              value={scoringFormat} 
-              onChange={(e) => setScoringFormat(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value={SCORING_FORMATS.PPR}>PPR (1.0)</option>
-              <option value={SCORING_FORMATS.HALF_PPR}>Half PPR (0.5)</option>
-              <option value={SCORING_FORMATS.STANDARD}>Standard (0.0)</option>
-            </select>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Current League</label>
+            <div className="p-2 border border-gray-300 rounded-md bg-gray-50">
+              {currentLeague ? (
+                <div>
+                  <div className="font-medium">{currentLeague.name}</div>
+                  <div className="text-sm text-gray-600">Custom Scoring</div>
+                </div>
+              ) : (
+                <div className="text-gray-500">No league selected</div>
+              )}
+            </div>
+            {!currentLeague && (
+              <p className="text-xs text-orange-600 mt-1">
+                Go to League Settings to configure scoring
+              </p>
+            )}
           </div>
           
           {leagueType === LEAGUE_TYPES.KEEPER && (
@@ -697,13 +839,17 @@ export default function TradeAnalyzer() {
               </ul>
             </div>
             <div>
-              <span className="font-medium text-blue-700">Pick Value Tiers:</span>
-              <ul className="text-blue-600 mt-1 text-xs">
-                <li>Elite (1-12): 85-110pts</li>
-                <li>High (13-24): 60-83pts</li>
-                <li>Mid (25-36): 40-58pts</li>
-                <li>Late (37+): &lt;40pts</li>
-              </ul>
+              <span className="font-medium text-blue-700">Scoring System:</span>
+              {currentLeague ? (
+                <ul className="text-blue-600 mt-1 text-xs">
+                  <li>Pass Yards: {scoringConfig.getConfig().passing.yards}/yd</li>
+                  <li>Pass TDs: {scoringConfig.getConfig().passing.touchdowns}pts</li>
+                  <li>Receptions: {scoringConfig.getConfig().receiving.receptions}pts</li>
+                  <li>Rush/Rec Yards: {scoringConfig.getConfig().rushing.yards}/yd</li>
+                </ul>
+              ) : (
+                <p className="text-blue-600 mt-1 text-xs">Using default scoring</p>
+              )}
             </div>
             <div>
               <span className="font-medium text-blue-700">Age Weighting:</span>
@@ -956,7 +1102,7 @@ export default function TradeAnalyzer() {
               Value Difference: <span className="font-semibold">{result.diff} points ({result.percentDiff}%)</span>
             </p>
             <p className="text-xs text-gray-500 mt-1">
-              Analysis based on {result.leagueType} league with {result.scoringFormat} scoring
+              Analysis based on {result.leagueName} ({result.leagueType} league)
             </p>
           </div>
         </div>

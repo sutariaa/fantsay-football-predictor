@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useTeam } from '../contexts/TeamContext';
 import { mockSchedule2025 } from '../data/mockSchedule2025';
+import { ScheduleService } from '../services/scheduleService';
 
 // Team strength ratings (1-100 scale)
 const TEAM_RATINGS = {
@@ -39,11 +40,11 @@ const calculateWinProbability = (team1, team2, isTeam1Home) => {
 };
 
 // Generate all matchups for a given week
-const generateWeekMatchups = (week) => {
+const generateWeekMatchups = (week, scheduleData) => {
   const matchups = [];
   const processedTeams = new Set();
   
-  Object.entries(mockSchedule2025).forEach(([team, schedule]) => {
+  Object.entries(scheduleData).forEach(([team, schedule]) => {
     if (processedTeams.has(team)) return;
     
     const game = schedule.find(g => g.week === week);
@@ -88,9 +89,34 @@ export default function Predictions() {
   const [weekMatchups, setWeekMatchups] = useState([]);
   const [userPicks, setUserPicks] = useState({}); // Store user's predictions
   const [showAllGames, setShowAllGames] = useState(!selectedTeam); // Default to team filter if team is selected
+  const [schedule, setSchedule] = useState(mockSchedule2025); // Current schedule data
+  const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
+  const [scheduleError, setScheduleError] = useState(null);
   
+  // Load schedule from API on component mount
   useEffect(() => {
-    let matchups = generateWeekMatchups(selectedWeek);
+    const loadSchedule = async () => {
+      setIsLoadingSchedule(true);
+      setScheduleError(null);
+      
+      try {
+        const apiSchedule = await ScheduleService.fetchSeasonSchedule(2025);
+        if (Object.keys(apiSchedule).length > 0) {
+          setSchedule(apiSchedule);
+        }
+      } catch (error) {
+        console.warn('Failed to load schedule from API, using mock data:', error);
+        setScheduleError('Using offline schedule data');
+      } finally {
+        setIsLoadingSchedule(false);
+      }
+    };
+
+    loadSchedule();
+  }, []);
+
+  useEffect(() => {
+    let matchups = generateWeekMatchups(selectedWeek, schedule);
     
     // Filter to only show selected team's games if team filter is active
     if (!showAllGames && selectedTeam) {
@@ -100,7 +126,7 @@ export default function Predictions() {
     }
     
     setWeekMatchups(matchups);
-  }, [selectedWeek, showAllGames, selectedTeam]);
+  }, [selectedWeek, showAllGames, selectedTeam, schedule]);
   
   const handleUserPick = (matchupId, pickedTeam) => {
     setUserPicks(prev => ({
@@ -128,11 +154,13 @@ export default function Predictions() {
     let wins = 0;
     let totalGames = 0;
     
-    const schedule = mockSchedule2025[team] || [];
-    schedule.forEach(game => {
-      const winProb = calculateWinProbability(team, game.opponent, game.home);
-      wins += winProb / 100;
-      totalGames++;
+    const teamSchedule = schedule[team] || [];
+    teamSchedule.forEach(game => {
+      if (game.opponent !== 'BYE') {
+        const winProb = calculateWinProbability(team, game.opponent, game.home);
+        wins += winProb / 100;
+        totalGames++;
+      }
     });
     
     return {
@@ -150,6 +178,23 @@ export default function Predictions() {
         <p className="text-center text-gray-600 mb-6">
           AI-powered predictions based on team strength, home field advantage, and historical performance
         </p>
+        
+        {isLoadingSchedule && (
+          <div className="text-center mb-4">
+            <div className="inline-flex items-center px-4 py-2 rounded-lg bg-blue-50 text-blue-700">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-700 mr-2"></div>
+              Loading live NFL schedule...
+            </div>
+          </div>
+        )}
+        
+        {scheduleError && (
+          <div className="text-center mb-4">
+            <div className="inline-flex items-center px-4 py-2 rounded-lg bg-yellow-50 text-yellow-700 text-sm">
+              ⚠️ {scheduleError}
+            </div>
+          </div>
+        )}
       </div>
       
       {/* Team Filter Toggle */}
